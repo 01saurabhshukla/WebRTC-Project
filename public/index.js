@@ -1,19 +1,22 @@
-import { io } from "socket.io-client";
-import * as mediasoupClient from "mediasoup-client";
+import { io } from 'socket.io-client';
+import * as mediasoupClient from 'mediasoup-client';
 
-const socket = io("/mediasoup");
+const socket = io("/mediasoup")
 
-socket.on('connection-success', ({ socketId }) => {
-    console.log(socketId);
-});
+socket.on('connection-success', ({ socketId, existsProducer }) => {
+  console.log(socketId, existsProducer)
+})
 
-
-let device;
+let device
 let rtpCapabilities
 let producerTransport
 let consumerTransport
 let producer
 let consumer
+let isProducer = false
+
+// https://mediasoup.org/documentation/v3/mediasoup-client/api/#ProducerOptions
+// https://mediasoup.org/documentation/v3/mediasoup-client/api/#transport-produce
 let params = {
   // mediasoup params
   encodings: [
@@ -39,13 +42,15 @@ let params = {
   }
 }
 
-const streamSuccess =  (stream) => {
+const streamSuccess = (stream) => {
   localVideo.srcObject = stream
   const track = stream.getVideoTracks()[0]
   params = {
     track,
     ...params
   }
+
+  goConnect(true)
 }
 
 const getLocalStream = () => {
@@ -68,6 +73,19 @@ const getLocalStream = () => {
   })
 }
 
+const goConsume = () => {
+  goConnect(false)
+}
+
+const goConnect = (producerOrConsumer) => {
+  isProducer = producerOrConsumer
+  device === undefined ? getRtpCapabilities() : goCreateTransport()
+}
+
+const goCreateTransport = () => {
+  isProducer ? createSendTransport() : createRecvTransport()
+}
+
 // A device is an endpoint connecting to a Router on the 
 // server side to send/recive media
 const createDevice = async () => {
@@ -81,7 +99,10 @@ const createDevice = async () => {
       routerRtpCapabilities: rtpCapabilities
     })
 
-    console.log('RTP Capabilities', device.rtpCapabilities)
+    console.log('Device RTP Capabilities', device.rtpCapabilities)
+
+    // once the device loads, create transport
+    goCreateTransport()
 
   } catch (error) {
     console.log(error)
@@ -94,71 +115,79 @@ const getRtpCapabilities = () => {
   // make a request to the server for Router RTP Capabilities
   // see server's socket.on('getRtpCapabilities', ...)
   // the server sends back data object which contains rtpCapabilities
-  socket.emit('getRtpCapabilities', (data) => {
+  socket.emit('createRoom', (data) => {
     console.log(`Router RTP Capabilities... ${data.rtpCapabilities}`)
 
     // we assign to local variable and will be used when
     // loading the client Device (see createDevice above)
     rtpCapabilities = data.rtpCapabilities
+
+    // once we have rtpCapabilities from the Router, create Device
+    createDevice()
   })
 }
 
 const createSendTransport = () => {
-  
+  // see server's socket.on('createWebRtcTransport', sender?, ...)
+  // this is a call from Producer, so sender = true
   socket.emit('createWebRtcTransport', { sender: true }, ({ params }) => {
-
+    // The server sends back params needed 
+    // to create Send Transport on the client side
     if (params.error) {
-      console.log(params.error);
-      return;
+      console.log(params.error)
+      return
     }
 
-    console.log(params);
+    console.log(params)
 
+    // creates a new WebRTC Transport to send media
+    // based on the server's producer transport params
+    // https://mediasoup.org/documentation/v3/mediasoup-client/api/#TransportOptions
     producerTransport = device.createSendTransport(params)
 
     // https://mediasoup.org/documentation/v3/communication-between-client-and-server/#producing-media
     // this event is raised when a first call to transport.produce() is made
     // see connectSendTransport() below
     producerTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
-        try {
-          // Signal local DTLS parameters to the server side transport
-          // see server's socket.on('transport-connect', ...)
-          await socket.emit('transport-connect', {
-            dtlsParameters,
-          })
+      try {
+        // Signal local DTLS parameters to the server side transport
+        // see server's socket.on('transport-connect', ...)
+        await socket.emit('transport-connect', {
+          dtlsParameters,
+        })
 
-          // Tell the transport that parameters were transmitted.
-          callback()
+        // Tell the transport that parameters were transmitted.
+        callback()
 
-        } catch (error) {
+      } catch (error) {
         errback(error)
       }
     })
 
-
     producerTransport.on('produce', async (parameters, callback, errback) => {
-        console.log(parameters)
+      console.log(parameters)
 
-        try {
-          // tell the server to create a Producer
-          // with the following parameters and produce
-          // and expect back a server side producer id
-          // see server's socket.on('transport-produce', ...)
-          await socket.emit('transport-produce', {
-            kind: parameters.kind,
-            rtpParameters: parameters.rtpParameters,
-            appData: parameters.appData,
-          }, ({ id }) => {
-            // Tell the transport that parameters were transmitted and provide it with the
-            // server side producer's id.
-            callback({ id })
-          })
-        } catch (error) {
-          errback(error)
-        }
+      try {
+        // tell the server to create a Producer
+        // with the following parameters and produce
+        // and expect back a server side producer id
+        // see server's socket.on('transport-produce', ...)
+        await socket.emit('transport-produce', {
+          kind: parameters.kind,
+          rtpParameters: parameters.rtpParameters,
+          appData: parameters.appData,
+        }, ({ id }) => {
+          // Tell the transport that parameters were transmitted and provide it with the
+          // server side producer's id.
+          callback({ id })
+        })
+      } catch (error) {
+        errback(error)
+      }
     })
-    
-  });
+
+    connectSendTransport()
+  })
 }
 
 const connectSendTransport = async () => {
@@ -217,6 +246,8 @@ const createRecvTransport = async () => {
         errback(error)
       }
     })
+
+    connectRecvTransport()
   })
 }
 
@@ -254,9 +285,4 @@ const connectRecvTransport = async () => {
 }
 
 btnLocalVideo.addEventListener('click', getLocalStream)
-btnRtpCapabilities.addEventListener('click', getRtpCapabilities)
-btnDevice.addEventListener('click', createDevice)
-btnCreateSendTransport.addEventListener('click', createSendTransport)
-btnConnectSendTransport.addEventListener('click', connectSendTransport)
-btnRecvSendTransport.addEventListener('click', createRecvTransport)
-btnConnectRecvTransport.addEventListener('click', connectRecvTransport)
+btnRecvSendTransport.addEventListener('click', goConsume)
