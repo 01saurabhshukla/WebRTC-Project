@@ -7,7 +7,10 @@
   "type": "module",
   "scripts": {
     "start": "nodemon app.js",
-    "bundle": "esbuild public/index.js --bundle --outfile=public/bundle.js --watch"
+    "bundle": "esbuild public/index.js --bundle --outfile=public/bundle.js --watch",
+    "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
+    "lint:fix": "eslint . --ext .js,.jsx,.ts,.tsx --fix",
+    "format": "prettier --write ."
   },
   "dependencies": {
     "express": "^5.1.0",
@@ -18,8 +21,11 @@
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
+    "esbuild": "^0.25.5",
+    "eslint": "^9.28.0",
+    "eslint-config-prettier": "^10.1.5",
+    "eslint-plugin-prettier": "^5.4.1",
     "nodemon": "^3.1.10",
-    "esbuild": "^0.25.5"
+    "prettier": "^3.5.3"
   }
-  
 }
